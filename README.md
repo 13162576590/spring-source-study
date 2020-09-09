@@ -607,34 +607,32 @@ definitionHolder = AnnotationConfigUtils.applyScopedProxyMode(scopeMetadata, def
   1、protected final void parse(@Nullable String className, String beanName) throws IOException方法
   	parse(bdCand.getBeanClassName(), holder.getBeanName());
 
-	Spring Boot启动总结 
-	1、创建一个StopWatch并执行start方法，这个类主要记录任务的执行时间
-	2、配置Headless属性，Headless模式是在缺少显示屏、键盘或者鼠标时候的系统配置
-	3、在文件META-INF\spring.factories中获取SpringApplicationRunListener接口的实现类EventPublishingRunListener，主要发布SpringApplicationEvent
-	4、把输入参数转成DefaultApplicationArguments类
-	5、创建Environment并设置比如环境信息，系统熟悉，输入参数和profile信息
-	6、打印Banner信息
-	7、创建Application的上下文，根据WebApplicationTyp来创建Context类，如果非web项目则创建AnnotationConfigApplicationContext，在构造方法中初始化AnnotatedBeanDefinitionReader和ClassPathBeanDefinitionScanner
-	8、在文件META-INF\spring.factories中获取SpringBootExceptionReporter接口的实现类FailureAnalyzers
-	9、准备application的上下文
-		a.初始化ApplicationContextInitializer
-		b.执行Initializer的contextPrepared方法，发布ApplicationContextInitializedEvent事件
-		c.如果延迟加载，在上下文添加处理器LazyInitializationBeanFactoryPostProcessor
-		d.执行加载方法，BeanDefinitionLoader.load方法，主要初始化了AnnotatedGenericBeanDefinition
-		e.执行Initializer的contextLoaded方法，发布ApplicationContextInitializedEvent事件
-	10、刷新上下文（后文会单独分析refresh方法），在这里真正加载bean到容器中。如果是web容器，会在onRefresh方法中创建一个Server并启动。
-  
-  IOC容器初始化总结
-	1、扫描资源
-  2、加载资源，获取Bean定义
-  3、注册Bean
-    
-
-  
-  
-  
-
 ```
 
 
 
+## 二、Spring Boot启动总结 
+
+1、创建一个StopWatch并执行start方法，这个类主要记录任务的执行时间
+2、配置Headless属性，Headless模式是在缺少显示屏、键盘或者鼠标时候的系统配置
+3、在文件META-INF\spring.factories中获取SpringApplicationRunListener接口的实现类EventPublishingRunListener，主要发布   	    SpringApplicationEvent
+4、把输入参数转成DefaultApplicationArguments类
+5、创建Environment并设置比如环境信息，系统熟悉，输入参数和profile信息
+6、打印Banner信息
+7、创建Application的上下文，根据WebApplicationTyp来创建Context类，如果非web项目则创建AnnotationConfigApplicationContext，在构造方法中初始化AnnotatedBeanDefinitionReader和ClassPathBeanDefinitionScanner
+8、在文件META-INF\spring.factories中获取SpringBootExceptionReporter接口的实现类FailureAnalyzers
+9、准备application的上下文
+	a.初始化ApplicationContextInitializer
+	b.执行Initializer的contextPrepared方法，发布ApplicationContextInitializedEvent事件
+	c.如果延迟加载，在上下文添加处理器LazyInitializationBeanFactoryPostProcessor
+	d.执行加载方法，BeanDefinitionLoader.load方法，主要初始化了AnnotatedGenericBeanDefinition
+	e.执行Initializer的contextLoaded方法，发布ApplicationContextInitializedEvent事件
+10、刷新上下文（后文会单独分析refresh方法），在这里真正加载bean到容器中。如果是web容器，会在onRefresh方法中创建一个Server并启动。
+
+
+
+##  三、IOC容器初始化总结
+  1、扫描资源
+  2、加载资源，获取Bean定义
+  3、注册Bean
+    
