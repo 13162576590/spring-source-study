@@ -5,7 +5,7 @@ spring 源码学习
 
 # Spring 源码
 
-
+​		主要分析Spring IOC、DI、AOP及MVC模块源码，相关模块时序图见时序图文件夹下html。
 
 ## 一、Spring Boot启动流程及IOC源码
 
@@ -611,7 +611,7 @@ definitionHolder = AnnotationConfigUtils.applyScopedProxyMode(scopeMetadata, def
 
 
 
-## 二、Spring Boot启动总结 
+##### Spring Boot启动总结 
 
 1、创建一个StopWatch并执行start方法，这个类主要记录任务的执行时间  
 2、配置Headless属性，Headless模式是在缺少显示屏、键盘或者鼠标时候的系统配置  
@@ -629,10 +629,584 @@ definitionHolder = AnnotationConfigUtils.applyScopedProxyMode(scopeMetadata, def
 	e.执行Initializer的contextLoaded方法，发布ApplicationContextInitializedEvent事件  
 10、刷新上下文（后文会单独分析refresh方法），在这里真正加载bean到容器中。如果是web容器，会在onRefresh方法中创建一个Server并启动。  
 
+#####  IOC容器初始化总结
 
-
-##  三、IOC容器初始化总结
   1、扫描资源  
   2、加载资源，获取Bean定义  
   3、注册Bean  
+
+
+
+## 二、依赖注入
+
+​		**依赖注入**（Dependency Injection，简称**DI**），还有一种方式叫“依赖查找”（Dependency Lookup）。通过控制反转，对象在被创建的时候，由一个调控系统内所有对象的外界实体将其所依赖的对象的引用传递给它。也可以说，依赖被注入到对象中。
+
+​		spring依赖注入发生在getBean()方法，spring获取到Bean的定义后，并未实例化，先缓存Bean的定义，需要使用时，在进行实例化。这样能够解决依赖注入时，循环依赖问题。
+
+    		Bean依赖注入入口AbstractApplicationContext类public void refresh() throws BeansException, IllegalStateException方法，该方法继续调用了protected void finishBeanFactoryInitialization(ConfigurableListableBeanFactory beanFactory)方法。
+     // Instantiate all remaining (non-lazy-init) singletons.
+      finishBeanFactoryInitialization(beanFactory);
     
+    进入DefaultListableBeanFactory类public void preInstantiateSingletons() throws BeansException方法
+      // Instantiate all remaining (non-lazy-init) singletons.
+      beanFactory.preInstantiateSingletons();
+    	该方法从Bean的注册表中获取Bean定义，获取class信息,诺bean是FactoryBean，及工厂Bean，需要拼接前缀&。
+    
+    进入AbstractBeanFactory类public Object getBean(String name) throws BeansException方法
+        getBean(beanName);
+     继续调用AbstractBeanFactory类方法
+     1、protected <T> T doGetBean(final String name, @Nullable final Class<T> requiredType,
+    			@Nullable final Object[] args, boolean typeCheckOnly) throws BeansException方法
+       return doGetBean(name, null, null, false);
+     2、protected String transformedBeanName(String name)方法
+       //解析别名，及把别名解析为规范名称
+       final String beanName = transformedBeanName(name);
+     经过一系列校验及判断是单例、原型模式等后，调用创建bean方法createBean。
+    
+    进入AbstractAutowireCapableBeanFactory类protected Object createBean(String beanName, RootBeanDefinition mbd, @Nullable Object[] args)
+    			throws BeanCreationException方法
+      return createBean(beanName, mbd, args);
+    	继续调用AbstractAutowireCapableBeanFactory类方法
+      1、protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final @Nullable Object[] args) throws BeanCreationException方法
+        Object beanInstance = doCreateBean(beanName, mbdToUse, args);
+        先重IOC容器中获取，不存在则创建
+        //IOC容器
+        private final ConcurrentMap<String, BeanWrapper> factoryBeanInstanceCache = new ConcurrentHashMap<>();
+    	2、protected BeanWrapper createBeanInstance(String beanName, RootBeanDefinition mbd, @Nullable Object[] args)方法	
+        instanceWrapper = createBeanInstance(beanName, mbd, args);
+    	3、protected BeanWrapper instantiateBean(final String beanName, final RootBeanDefinition mbd)方法
+        //初始化bean
+        return instantiateBean(beanName, mbd);
+    
+    进入SimpleInstantiationStrategy类public Object instantiate(RootBeanDefinition bd, @Nullable String beanName, BeanFactory owner)方法
+      //根据策略就行初始化
+      beanInstance = getInstantiationStrategy().instantiate(mbd, beanName, parent);
+    	//初始化实例包装为一个BeanWrapper
+    	BeanWrapper bw = new BeanWrapperImpl(beanInstance);
+    
+    回到AbstractAutowireCapableBeanFactory类protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final @Nullable Object[] args)
+    			throws BeanCreationException方法
+      继续调用AbstractAutowireCapableBeanFactory类方法
+      1、protected void populateBean(String beanName, RootBeanDefinition mbd, @Nullable BeanWrapper bw)方法
+     	  //将Bean实例对象封装，并且Bean定义中配置的属性值赋值给实例对象
+      	populateBean(beanName, mbd, instanceWrapper);
+    		该方法中，如果实例化Bean需要依赖注入其他Bean，那么会先走以下逻辑，源码如下：
+        //获取所有的后置处理器getBeanPostProcessors()
+        //BeanPostProcessor就是在Bean实例创建之后，在进行populateBean赋值之后，init初始化方法之前进行一次调用，init方法之后进行一		//次调用，这样一来，整个Bean的生命周期，全部掌控在了Spring之下，包括Bean实例创建new Instance()，赋值前后populateBean()，		//初始化前后init()，销毁前后destroy()。
+        for (BeanPostProcessor bp : getBeanPostProcessors()) {
+    				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+    					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+              //当实例化Bean需要依赖注入其他Bean，遍历到bp如果是AutowiredAnnotationBeanPostProcessor，进入AutowiredAnnotationBeanPostProcessor类public PropertyValues postProcessProperties(PropertyValues pvs, Object bean, String beanName)方法
+    					PropertyValues pvsToUse = ibp.postProcessProperties(pvs, bw.getWrappedInstance(), beanName);
+    					if (pvsToUse == null) {
+    						if (filteredPds == null) {
+    							filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+    						}
+    						pvsToUse = ibp.postProcessPropertyValues(pvs, filteredPds, bw.getWrappedInstance(), beanName);
+    						if (pvsToUse == null) {
+    							return;
+    						}
+    					}
+    					pvs = pvsToUse;
+    				}
+    			}
+    
+    		实例化Bean需要依赖注入其他Bean时，获取到getBeanPostProcessors()进行遍历，当遍历到bp是AutowiredAnnotationBeanPostProcessor时，进入AutowiredAnnotationBeanPostProcessor类public PropertyValues postProcessProperties(PropertyValues pvs, Object bean, String beanName)方法进行相关依赖的Bean实例化。
+    	  PropertyValues pvsToUse = ibp.postProcessProperties(pvs, bw.getWrappedInstance(), beanName);
+    
+    进入InjectionMetadata类public void inject(Object target, @Nullable String beanName, @Nullable PropertyValues pvs) throws Throwable方法
+      metadata.inject(bean, beanName, pvs);
+    
+    进入InjectedElement类protected void inject(Object bean, @Nullable String beanName, @Nullable PropertyValues pvs) throws Throwable方法
+      element.inject(target, beanName, pvs);
+    
+    回到DefaultListableBeanFactory类，调用public Object resolveDependency(DependencyDescriptor descriptor, @Nullable String requestingBeanName,
+    			@Nullable Set<String> autowiredBeanNames, @Nullable TypeConverter typeConverter) throws BeansException方法
+      value = beanFactory.resolveDependency(desc, beanName, autowiredBeanNames, typeConverter);
+    	该方法中会注入相关的依赖，源码如下:
+    	//把相关的依赖bean注入
+      ReflectionUtils.makeAccessible(field);
+      field.set(bean, value);
+    	继续调用DefaultListableBeanFactory类方法
+    	1、public Object doResolveDependency(DependencyDescriptor descriptor, @Nullable String beanName,
+    			@Nullable Set<String> autowiredBeanNames, @Nullable TypeConverter typeConverter) throws BeansException方法
+        
+    进入DependencyDescriptor类public Object resolveCandidate(String beanName, Class<?> requiredType, BeanFactory beanFactory) throws BeansException方法
+      instanceCandidate = descriptor.resolveCandidate(autowiredBeanName, type, this);
+    
+    然后再次回到AbstractBeanFactory类public Object getBean(String name) throws BeansException方法，该方法后的执行流程已经分析。
+      return beanFactory.getBean(beanName);
+    
+    当相关的依赖都注入，再次回到AbstractAutowireCapableBeanFactory类protected void populateBean(String beanName, RootBeanDefinition mbd, @Nullable BeanWrapper bw)方法，继续调用protected void applyPropertyValues(String beanName, BeanDefinition mbd, BeanWrapper bw, PropertyValues pvs)方法
+      if (pvs != null) {
+        //对属性进行注入，注入参数的方法（注解的Bean的依赖注入除外）
+        applyPropertyValues(beanName, mbd, bw, pvs);
+      }
+    
+    回到AbstractAutowireCapableBeanFactory类protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final @Nullable Object[] args)
+    			throws BeanCreationException方法
+      继续调用AbstractAutowireCapableBeanFactory类方法
+      1、protected Object initializeBean(final String beanName, final Object bean, @Nullable RootBeanDefinition mbd) 方法
+      exposedObject = initializeBean(beanName, exposedObject, mbd);
+    	方法中继续调用
+        //Aware实现处理,为 Bean 实例对象包装相关属性，如名称，类加载器，所属容器等信息
+        invokeAwareMethods(beanName, bean);
+    		//对BeanPostProcessor后置处理器的postProcessBeforeInitialization回调方法的调用，为Bean实例初始化前做一些处理
+    		wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+    		//调用Bean实例对象初始化的方法，这个初始化方法是在 Spring Bean定义配置文件中通过init-Method属性指定的
+    		invokeInitMethods(beanName, wrappedBean, mbd);
+    		//对BeanPostProcessor后置处理器的postProcessAfterInitialization回调方法的调用，为Bean实例初始化之后做一些处理
+    		wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+    
+
+
+## 三、Spring AOP
+
+​		AOP 是 OOP 的延续，是 Aspect Oriented Programming 的缩写，意思是面向切面编程。可以通过预 编译方式和运行期动态代理实现在不修改源代码的情况下给程序动态统一添加功能的一种技术。AOP 设计模式孜孜不倦追求的是调用者和被调用者之间的解耦，AOP 可以说也是这种目标的一种实现。 我们现在做的一些非业务，如:日志、事务、安全等都会写在业务代码中(也即是说，这些非业务类横切 于业务类)，但这些代码往往是重复，复制——粘贴式的代码会给程序的维护带来不便，AOP 就实现了 把这些业务需求与系统需求分开来做。这种解决的方式也称代理机制。
+
+​		Spring 的 AOP 是通过接入 BeanPostProcessor 后置处理器开始的，它是 Spring IOC 容器经常使用到 的一个特性，这个 Bean 后置处理器是一个监听器，可以监听容器触发的 Bean 声明周期事件。后置处 理器向容器注册以后，容器中管理的 Bean 就具备了接收 IOC 容器事件回调的能力。
+
+​		initializeBean()方法为容器产生的 Bean 实例对象添加 BeanPostProcessor 后置处理器，AbstractAutowireCapableBeanFactory 类中，initializeBean()方法实现为容器创建的 Bean 实例对象添加 BeanPostProcessor 后置处理器。该方法就是spring AOP的入口。
+
+```java
+进入AbstractAutowireCapableBeanFactory类protected Object initializeBean(final String beanName, final Object bean, @Nullable RootBeanDefinition mbd)方法
+  exposedObject = initializeBean(beanName, exposedObject, mbd);
+	继续调用AbstractAutowireCapableBeanFactory类方法
+	1、public Object applyBeanPostProcessorsBeforeInitialization(Object existingBean, String beanName)
+			throws BeansException 方法
+  //调用 BeanPostProcessor 后置处理器实例对象初始化之前的处理方法
+  wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+	//遍历容器为所创建的Bean添加的所有BeanPostProcessor后置处理器
+  public Object applyBeanPostProcessorsBeforeInitialization(Object existingBean, String beanName)
+  throws BeansException {
+    Object result = existingBean;
+    //遍历容器为所创建的Bean添加的所有BeanPostProcessor后置处理器
+    for (BeanPostProcessor beanProcessor : getBeanPostProcessors()) {
+      //调用Bean实例所有的后置处理中的初始化前处理方法，为Bean实例对象在初始化之前做一些自定义的处理操作
+      Object current = beanProcessor.postProcessBeforeInitialization(result, beanName); 
+      if (current == null) {
+        return result;
+      }
+      result = current; 
+    }
+    return result;
+  }
+	2、public Object applyBeanPostProcessorsAfterInitialization(Object existingBean, String beanName)
+			throws BeansException方法
+    //遍历容器为所创建的Bean添加的所有BeanPostProcessor后置处理器
+    wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+    //调用BeanPostProcessor后置处理器实例对象初始化之后的处理方法
+    public Object applyBeanPostProcessorsAfterInitialization(Object existingBean, String beanName)
+         throws BeansException {
+        Object result = existingBean;
+        //遍历容器为所创建的Bean添加的所有BeanPostProcessor后置处理器
+        for (BeanPostProcessor beanProcessor : getBeanPostProcessors()) {
+          //调用Bean实例所有的后置处理中的初始化后处理方法，为Bean实例对象在初始化之后做一些自定义的处理操作
+          Object current = beanProcessor.postProcessAfterInitialization(result, beanName); 
+          if (current == null) {
+              return result;
+           }
+          result = current; 
+        }
+    		return result;
+    }
+
+BeanPostProcessor是一个接口，其初始化前的操作方法和初始化后的操作方法均委托其实现子类来实现，在Spring中，BeanPostProcessor的实现子类非常的多，分别完成不同的操作，如:AOP面向切面编程的注册通知适配器、Bean对象的数据校验、Bean继承属性、方法的合并等，我们以最简单的AOP切面织入来简单了解其主要的功能。下面我们来分析其中一个创建AOP代理对象的子类AbstractAutoProxyCreator类。该类重写了 postProcessAfterInitialization()方法。
+  进入AbstractAutoProxyCreator类public Object postProcessAfterInitialization(@Nullable Object bean, String beanName)方法
+  Object current = processor.postProcessAfterInitialization(result, beanName);
+	继续调用AbstractAutoProxyCreator类方法
+  1、protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey)方法
+    return wrapIfNecessary(bean, beanName, cacheKey);
+
+进入AspectJAwareAdvisorAutoProxyCreator类protected boolean shouldSkip(Class<?> beanClass, String beanName)方法
+  if (isInfrastructureClass(bean.getClass()) || shouldSkip(bean.getClass(), beanName))
+
+进入AnnotationAwareAspectJAutoProxyCreator类protected List<Advisor> findCandidateAdvisors()方法
+  List<Advisor> candidateAdvisors = findCandidateAdvisors();
+
+进入AbstractAdvisorAutoProxyCreator类protected List<Advisor> findCandidateAdvisors()方法
+  List<Advisor> advisors = super.findCandidateAdvisors();
+
+进入BeanFactoryAspectJAdvisorsBuilder类public List<Advisor> buildAspectJAdvisors()方法
+  advisors.addAll(this.aspectJAdvisorsBuilder.buildAspectJAdvisors());
+
+回到AbstractAutoProxyCreator类public Object postProcessAfterInitialization(@Nullable Object bean, String beanName)方法，继续调用
+  Object[] specificInterceptors = getAdvicesAndAdvisorsForBean(bean.getClass(), beanName, null);
+
+再次进入AbstractAdvisorAutoProxyCreator类，调用protected Object[] getAdvicesAndAdvisorsForBean(
+			Class<?> beanClass, String beanName, @Nullable TargetSource targetSource)方法
+  继续调用AbstractAdvisorAutoProxyCreator类方法
+  1、protected List<Advisor> findEligibleAdvisors(Class<?> beanClass, String beanName)方法
+
+进入AopUtils类public static List<Advisor> findAdvisorsThatCanApply(List<Advisor> candidateAdvisors, Class<?> clazz) 方法
+  return AopUtils.findAdvisorsThatCanApply(candidateAdvisors, beanClass);
+
+再次回到AbstractAutoProxyCreator类protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey)方法，继续调用protected Object createProxy(Class<?> beanClass, @Nullable String beanName,
+			@Nullable Object[] specificInterceptors, TargetSource targetSource)方法方法
+  Object proxy = createProxy(bean.getClass(), beanName, specificInterceptors, new SingletonTargetSource(bean));
+	继续调用AbstractAutoProxyCreator类方法
+  1、protected Advisor[] buildAdvisors(@Nullable String beanName, @Nullable Object[] specificInterceptors)方法
+    //封装成 Advisor 
+    Advisor[] advisors = buildAdvisors(beanName, specificInterceptors);
+
+进入DefaultAdvisorAdapterRegistry类public Advisor wrap(Object adviceObject) throws UnknownAdviceTypeException 方法
+  advisors[i] = this.advisorAdapterRegistry.wrap(allInterceptors.get(i));
+
+再次回到AbstractAutoProxyCreator类protected Object createProxy(Class<?> beanClass, @Nullable String beanName,
+			@Nullable Object[] specificInterceptors, TargetSource targetSource)方法，继续调用public Object getProxy(@Nullable ClassLoader classLoader)方法
+  return proxyFactory.getProxy(getProxyClassLoader());
+
+进入ProxyFactory类public Object getProxy(@Nullable ClassLoader classLoader)方法
+  return proxyFactory.getProxy(getProxyClassLoader());
+
+进入ProxyCreatorSupport类protected final synchronized AopProxy createAopProxy()方法
+  return createAopProxy().getProxy(classLoader);
+
+进入DefaultAopProxyFactory类public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException方法
+  return getAopProxyFactory().createAopProxy(this);
+	代理2种实现方式：
+    1.jdk动态代理
+    2.cglib代理
+  spring5及spring boot2.x AOP默认是cglib。此处使用cglib代理。
+    
+回到ProxyFactory类public Object getProxy(@Nullable ClassLoader classLoader)方法，进入CglibAopProxy类public Object getProxy(@Nullable ClassLoader classLoader)方法
+    return createAopProxy().getProxy(classLoader);
+	继续调用CglibAopProxy类方法
+	1、private Callback[] getCallbacks(Class<?> rootClass) throws Exception方法
+    Callback[] callbacks = getCallbacks(rootClass);
+
+进入ObjenesisCglibAopProxy类protected Object createProxyClassAndInstance(Enhancer enhancer, Callback[] callbacks)方法
+  return createProxyClassAndInstance(enhancer, callbacks);
+
+进入Enhancer类public Class createClass()方法
+  Class<?> proxyClass = enhancer.createClass();
+	继续调用Enhancer类方法
+  1、private Object createHelper()方法
+    return (Class) createHelper();
+
+进入AbstractClassGenerator类protected Object create(Object key)方法
+  Object result = super.create(key);
+	继续调用AbstractClassGenerator类方法
+  1、public Object get(AbstractClassGenerator gen, boolean useCache)方法			
+    Object obj = data.get(this, getUseCache());
+
+进入LoadingCache类public V get(K key)方法
+  Object cachedValue = generatedClasses.get(gen);
+	继续调用LoadingCache类方法
+  1、protected V createEntry(final K key, KK cacheKey, Object v)方法
+    return v != null && !(v instanceof FutureTask) ? v : this.createEntry(key, cacheKey, v);
+		源码：
+    protected V createEntry(final K key, KK cacheKey, Object v) {
+        boolean creator = false;
+        FutureTask task;
+        Object result;
+        if (v != null) {
+            task = (FutureTask)v;
+        } else {
+            task = new FutureTask(new Callable<V>() {
+                public V call() throws Exception {
+                  	//执行线程方法
+                    return LoadingCache.this.loader.apply(key);
+                }
+            });
+            result = this.map.putIfAbsent(cacheKey, task);
+            if (result == null) {
+                creator = true;
+              	//启动一个线程，调用run方法，在run方法内部在回调call()方法，即上述源码return LoadingCache.this.loader.apply(key)处
+                task.run();
+            } else {
+                if (!(result instanceof FutureTask)) {
+                    return result;
+                }
+
+                task = (FutureTask)result;
+            }
+        }
+
+        try {
+            result = task.get();
+        } catch (InterruptedException var9) {
+            throw new IllegalStateException("Interrupted while loading cache item", var9);
+        } catch (ExecutionException var10) {
+            Throwable cause = var10.getCause();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException)cause;
+            }
+
+            throw new IllegalStateException("Unable to load cache item", cause);
+        }
+
+        if (creator) {
+            this.map.put(cacheKey, result);
+        }
+
+        return result;
+    }
+		上述源码启动一个线程，调用run方法，在run方法内部在回调call()方法，即上述源码return LoadingCache.this.loader.apply(key)处，然后进入AbstractClassGenerator类内部类ClassLoaderData的构造函数public ClassLoaderData(ClassLoader classLoader)。
+		
+进入AbstractClassGenerator类内部类ClassLoaderData的public ClassLoaderData(ClassLoader classLoader)构造函数
+		return LoadingCache.this.loader.apply(key);
+		此处调用是初始化时的一个function接口，源码如下：        
+    public ClassLoaderData(ClassLoader classLoader) {
+        if (classLoader == null) {
+          	throw new IllegalArgumentException("classLoader == null is not yet supported");
+        } else {
+            this.classLoader = new WeakReference(classLoader);
+          	//function接口
+            Function<AbstractClassGenerator, Object> load = new Function<AbstractClassGenerator, Object>() {
+              public Object apply(AbstractClassGenerator gen) {
+                Class klass = gen.generate(ClassLoaderData.this);
+                return gen.wrapCachedClass(klass);
+              }
+            };
+          	this.generatedClasses = new LoadingCache(GET_KEY, load);
+        }
+    }
+		当在类LoadingCache的protected V createEntry(final K key, KK cacheKey, Object v)方法调用task.run()方法时，会启动一个线程，最终回调到线程的public V call() throws Exception方法，执行LoadingCache.this.loader.apply(key)，因此执行到初始化的function接口。
+
+再次进入Enhancer类，调用protected Class generate(ClassLoaderData data)方法
+  	Class klass = gen.generate(ClassLoaderData.this);
+
+再次进入AbstractClassGenerator类，调用protected Class generate(ClassLoaderData data)方法
+  	return super.generate(data);
+
+进入ClassLoaderAwareGeneratorStrategy类public byte[] generate(ClassGenerator cg) throws Exception方法
+  public byte[] generate(ClassGenerator cg) throws Exception
+  
+进入DefaultGeneratorStrategy类public byte[] generate(ClassGenerator cg) throws Exception方法
+  return super.generate(cg);
+
+再次进入Enhancer类，调用public void generateClass(ClassVisitor v) throws Exception方法
+  this.transform(cg).generateClass(cw);
+	继续调用Enhancer类方法
+	1、private void emitMethods(final ClassEmitter ce, List methods, List actualMethods)方法
+    emitMethods(e, methods, actualMethods);
+
+再次CglibAopProxy类，调用public int accept(Method method)方法
+  int index = filter.accept(actualMethod);
+
+进入AdvisedSupport类public List<Object> getInterceptorsAndDynamicInterceptionAdvice(Method method, @Nullable Class<?> targetClass)方法
+  List<?> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+
+进入DefaultAdvisorChainFactory类public List<Object> getInterceptorsAndDynamicInterceptionAdvice(
+			Advised config, Method method, @Nullable Class<?> targetClass)方法
+  cached = this.advisorChainFactory.getInterceptorsAndDynamicInterceptionAdvice(
+  this, method, targetClass);
+
+进入DefaultAdvisorAdapterRegistry类public MethodInterceptor[] getInterceptors(Advisor advisor) throws UnknownAdviceTypeException方法
+  MethodInterceptor[] interceptors = registry.getInterceptors(advisor);
+
+cglib执行过程，执行入口在CglibAopProxy内部类DynamicAdvisedInterceptor类public Object intercept(Object proxy, Method method, Object[] args, MethodProxy methodProxy) throws Throwable方法
+  
+再次进入AdvisedSupport类	public List<Object> getInterceptorsAndDynamicInterceptionAdvice(Method method, @Nullable Class<?> targetClass)方法
+  // 获取当前方法的拦截器链
+  List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+
+进入CglibAopProxy类public Object proceed() throws Throwable方法
+  retVal = new CglibMethodInvocation(proxy, target, method, args, targetClass, chain, methodProxy).proceed();
+
+进入ReflectiveMethodInvocation类public Object proceed() throws Throwable方法
+  return super.proceed();
+	源码如下：
+  public Object proceed() throws Throwable {
+		// We start with an index of -1 and increment early.
+    //如果是最后一个拦截器执行改方法
+		if (this.currentInterceptorIndex == this.interceptorsAndDynamicMethodMatchers.size() - 1) {
+			return invokeJoinpoint();
+		}
+
+    //获取拦截器，执行方法
+		Object interceptorOrInterceptionAdvice =
+				this.interceptorsAndDynamicMethodMatchers.get(++this.currentInterceptorIndex);
+		if (interceptorOrInterceptionAdvice instanceof InterceptorAndDynamicMethodMatcher) {
+			// Evaluate dynamic method matcher here: static part will already have
+			// been evaluated and found to match.
+			InterceptorAndDynamicMethodMatcher dm =
+					(InterceptorAndDynamicMethodMatcher) interceptorOrInterceptionAdvice;
+			Class<?> targetClass = (this.targetClass != null ? this.targetClass : this.method.getDeclaringClass());
+			if (dm.methodMatcher.matches(this.method, targetClass, this.arguments)) {
+				return dm.interceptor.invoke(this);
+			}
+			else {
+				// Dynamic matching failed.
+				// Skip this interceptor and invoke the next in the chain.
+				return proceed();
+			}
+		}
+		else {
+			// It's an interceptor, so we just invoke it: The pointcut will have
+			// been evaluated statically before this object was constructed.
+			return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
+		}
+	}
+
+进入ExposeInvocationInterceptor类public Object invoke(MethodInvocation mi) throws Throwable方法
+  return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
+	ExposeInvocationInterceptor暴露调用器的拦截器，其就是起了暴露一个调用器作用的拦截器。
+    
+进入CglibAopProxy内部类CglibMethodInvocation的public Object proceed() throws Throwable方法
+  return mi.proceed();
+
+再次回到ReflectiveMethodInvocation类public Object proceed() throws Throwable方法
+  //CglibMethodInvocation#proceed
+  return super.proceed();
+
+进入AspectJAroundAdvice类public Object invoke(MethodInvocation mi) throws Throwable方法
+  //根据不同的拦截器，进入不同的类
+  return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
+
+进入AbstractAspectJAdvice类方法protected Object invokeAdviceMethod(JoinPoint jp, @Nullable JoinPointMatch jpMatch,@Nullable Object returnValue, @Nullable Throwable t) throws Throwable方法
+  return invokeAdviceMethod(pjp, jpm, null, null);
+	继续调用AbstractAspectJAdvice类方法
+  1、return invokeAdviceMethodWithGivenArgs(argBinding(jp, jpMatch, returnValue, t))方法
+    return invokeAdviceMethodWithGivenArgs(argBinding(jp, jpMatch, returnValue, t));
+
+进入Method类public Object invoke(Object obj, Object... args)方法
+  return this.aspectJAdviceMethod.invoke(this.aspectInstanceFactory.getAspectInstance(), actualArgs);
+
+进入DelegatingMethodAccessorImpl类public Object invoke(Object var1, Object[] var2) throws IllegalArgumentException, InvocationTargetException方法
+  return ma.invoke(obj, args);
+
+进入NativeMethodAccessorImpl类public Object invoke(Object var1, Object[] var2) throws IllegalArgumentException, InvocationTargetException方法
+  return this.delegate.invoke(var1, var2);
+
+进入切面方法，Demo是以LogAspect为列，故进入LogAspect类public Object doAround(ProceedingJoinPoint point) throws Throwable方法
+  return invoke0(this.method, var1, var2);
+  LogAspect类源码如下：
+  /**
+   * 项目名称：spring-cloud-service
+   * 类 名 称：LogAspect
+   * 类 描 述：TODO
+   * 创建时间：2020/9/12 11:06 下午
+   * 创 建 人：chenyouhong
+   */
+  @Aspect
+  @Component
+  public class LogAspect {
+
+      @Pointcut("execution(* com.cloud.user.controller.*.*(..))")
+      public void aspect() {
+      }
+
+      @Before("aspect()")
+      public void before(JoinPoint jp) throws Throwable {
+          //...
+          System.out.println("Before");
+      }
+
+
+      @Around("aspect()")
+      public Object doAround(ProceedingJoinPoint point) throws Throwable {
+          //...
+          System.out.println("==========");
+          Object returnValue =  point.proceed(point.getArgs());
+          System.out.println("**********");
+          //...
+          return returnValue;
+      }
+
+      @After("aspect()")
+      public void after(JoinPoint jp) throws Throwable {
+          //...
+          System.out.println("after");
+      }
+  }
+
+	此处会进入切面LogAspect类public Object doAround(ProceedingJoinPoint point) throws Throwable方法
+  
+进入MethodInvocationProceedingJoinPoint类public Object proceed(Object[] arguments) throws Throwable方法
+  Object returnValue =  point.proceed(point.getArgs());
+
+再次回到ReflectiveMethodInvocation类public Object proceed() throws Throwable方法
+  //CglibMethodInvocation#proceed
+  return super.proceed();
+
+进入MethodBeforeAdviceInterceptor类public Object invoke(MethodInvocation mi) throws Throwable方法
+  return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
+	因为此时的拦截器interceptorOrInterceptionAdvice对应的类型是MethodBeforeAdviceInterceptor。
+
+进入AspectJMethodBeforeAdvice类public void before(Method method, Object[] args, @Nullable Object target) throws Throwable方法
+  this.advice.before(mi.getMethod(), mi.getArguments(), mi.getThis());
+
+再次进入AbstractAspectJAdvice类方法protected Object invokeAdviceMethod(JoinPoint jp, @Nullable JoinPointMatch jpMatch,@Nullable Object returnValue, @Nullable Throwable t) throws Throwable方法
+  return invokeAdviceMethod(pjp, jpm, null, null);
+	继续调用AbstractAspectJAdvice类方法
+  1、return invokeAdviceMethodWithGivenArgs(argBinding(jp, jpMatch, returnValue, t))方法
+    return invokeAdviceMethodWithGivenArgs(argBinding(jp, jpMatch, returnValue, t));
+	  此处逻辑同上述invokeAdviceMethod方法执行一直，只是执行切面时，进入方法是LogAspect类public void before(JoinPoint jp) throws Throwable方法
+
+再次回到CglibAopProxy内部类CglibMethodInvocation的public Object proceed() throws Throwable方法
+  return mi.proceed();
+	继续执行，当执行到拦截器，因为此时的拦截器interceptorOrInterceptionAdvice对应的类型是AspectJAfterAdvice。
+    
+进入AspectJAfterAdvice类public Object invoke(MethodInvocation mi) throws Throwable方法
+  //interceptorOrInterceptionAdvice类型是AspectJAfterAdvice
+  return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
+    
+当执行到最后一个拦截器时，进入CglibAopProxy内部类CglibMethodInvocation的protected Object invokeJoinpoint() throws Throwable方法
+  return invokeJoinpoint();
+	
+  if (this.currentInterceptorIndex == this.interceptorsAndDynamicMethodMatchers.size() - 1) {
+    return invokeJoinpoint();
+  }
+
+进入MethodProxy类public Object invoke(Object obj, Object[] args) throws Throwable方法
+  return this.methodProxy.invoke(this.target, this.arguments);
+	继续调用MethodProxy类方法
+  1、init()方法
+  
+进入被代理类需要执行的方法，demo是UserController类public Mono<String> login()方法
+  return fci.f1.invoke(fci.i1, obj, args);
+	被代理类源码如下：
+  @RestController
+  @RequestMapping("/user")
+  public class UserController {
+
+      @Autowired
+      private TestService testService;
+
+      private List<String> list;
+
+      /**
+       * 密码模式  认证.
+       *
+       * @return
+       */
+      @RequestMapping("/test")
+      public Mono<String> login() {
+          //登录 之后生成令牌的数据返回
+
+          testService.test();
+          return Mono.just("test");
+      }
+
+      /**
+       * 密码模式  认证.
+       *
+       * @return
+       */
+      @RequestMapping("/test2")
+      @PreAuthorize(value = "hasAnyAuthority('test')")
+  //    @PreAuthorize("hasPermission('test8988989')")
+      public Mono<String> login2() {
+          //登录 之后生成令牌的数据返回
+          System.out.println("rest2");
+          return Mono.just("test2");
+      }
+  }
+
+再次回到AspectJAfterAdvice类public Object invoke(MethodInvocation mi) throws Throwable方法
+  继续之前并未执行完逻辑，继续往后执行，源码如下：
+  @Override
+	public Object invoke(MethodInvocation mi) throws Throwable {
+		try {
+      //执行被代理类想要执行的方法
+			return mi.proceed();
+		}
+		finally {
+      //此处逻辑同上述invokeAdviceMethod方法执行一直，只是执行切面时，进入方法是LogAspect类public void after(JoinPoint jp) throws Throwable方法
+			invokeAdviceMethod(getJoinPointMatch(), null, null);
+		}
+	}
+```
+
