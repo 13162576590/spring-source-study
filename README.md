@@ -1210,3 +1210,388 @@ cglib执行过程，执行入口在CglibAopProxy内部类DynamicAdvisedIntercept
 	}
 ```
 
+
+
+## 四 Spring MVC
+
+​		Spring MVC属于SpringFrameWork的后续产品，已经融合在Spring Web Flow里面。Spring 框架提供了构建 [Web](https://baike.baidu.com/item/Web/150564) 应用程序的全功能 MVC 模块。使用 Spring 可插入的 MVC 架构，从而在使用Spring进行WEB开发时，可以选择使用Spring的Spring MVC框架或集成其他MVC开发框架。
+
+​		RequestMappingHandlerMapping 映射器，只要类上有 `Controller` 或 `RequestMapping` 注解，就符合该映射器管辖范围。默认会自动加载所有实现HandlerMapping接口的bean，且我们可以通过serOrder来设置优先级，系统默认会加载RequestMappingHandlerMapping、BeanNameUrlHandlerMapping、SimpleUrlHandlerMapping 并且按照顺序使用。
+
+​		`HandlerMappings`在`DispathServlet`中主要作用是为请求的`urlpath`匹配对应的`Controller`，建立一个映射关系，根据请求查找`Handler`、`Interceptor`。`HandlerMappings`将请求传递到`HandlerExecutionChain`上，`HandlerExecutionChain`包含了一个能够处理该请求的处理器，还可以包含拦截改请求的拦截器。
+
+​		url和Controller映射关系初始化。在IOC容器初始化中，已经了解到一个Bean如何初始化，url与Controller的映射关系也在这个过程中完成的。入口在AbstractAutowireCapableBeanFactory类protected Object initializeBean(final String beanName, final Object bean, @Nullable RootBeanDefinition mbd)方法。
+
+```java
+当初始化RequestMappingHandlerMapping时，RequestMappingHandlerMapping映射器就会处理url与Controller的映射关系。
+进入AbstractAutowireCapableBeanFactory类protected Object initializeBean(final String beanName, final Object bean, @Nullable RootBeanDefinition mbd)方法
+  invokeInitMethods(beanName, wrappedBean, mbd);
+	继续调用AbstractAutowireCapableBeanFactory类方法
+  1、protected void invokeInitMethods(String beanName, final Object bean, @Nullable RootBeanDefinition mbd)
+			throws Throwable方法
+    invokeInitMethods(beanName, wrappedBean, mbd);
+
+初始化RequestMappingHandlerMapping相应Bean时，进入RequestMappingHandlerMapping类的public void afterPropertiesSet()方法
+  ((InitializingBean) bean).afterPropertiesSet();
+
+进入AbstractHandlerMethodMapping类public void afterPropertiesSet()方法
+  super.afterPropertiesSet();
+	继续调用AbstractAutowireCapableBeanFactory类方法
+  1、protected void initHandlerMethods()方法
+    initHandlerMethods();
+	2、protected void processCandidateBean(String beanName)方法
+    processCandidateBean(beanName);
+	3、protected void detectHandlerMethods(Object handler)方法
+    detectHandlerMethods(beanName);
+  
+进入MethodIntrospector类public static <T> Map<Method, T> selectMethods(Class<?> targetType, final MetadataLookup<T> metadataLookup)方法
+			Map<Method, T> methods = MethodIntrospector.selectMethods(userType,
+					(MethodIntrospector.MetadataLookup<T>) method -> {
+						try {
+							return getMappingForMethod(method, userType);
+						}
+						catch (Throwable ex) {
+							throw new IllegalStateException("Invalid mapping on handler class [" +
+									userType.getName() + "]: " + method, ex);
+						}
+					});
+
+进入ReflectionUtils类public static void doWithMethods(Class<?> clazz, MethodCallback mc, @Nullable MethodFilter mf)方法
+  ReflectionUtils.doWithMethods(currentHandlerType, method -> {
+				Method specificMethod = ClassUtils.getMostSpecificMethod(method, targetClass);
+				T result = metadataLookup.inspect(specificMethod);
+				if (result != null) {
+					Method bridgedMethod = BridgeMethodResolver.findBridgedMethod(specificMethod);
+					if (bridgedMethod == specificMethod || metadataLookup.inspect(bridgedMethod) == null) {
+						methodMap.put(specificMethod, result);
+					}
+				}
+			}, ReflectionUtils.USER_DECLARED_METHODS);
+
+回到MethodIntrospector类public static <T> Map<Method, T> selectMethods(Class<?> targetType, final MetadataLookup<T> metadataLookup)方法，会进入回调方法。
+  //此出回调传入的方法，见下方源码处
+  mc.doWith(method);
+  源码如下:
+	//传入一个MethodCallback的回调，当回调时进入方法内部执行
+	ReflectionUtils.doWithMethods(currentHandlerType, method -> {
+				Method specificMethod = ClassUtils.getMostSpecificMethod(method, targetClass);
+				T result = metadataLookup.inspect(specificMethod);
+				if (result != null) {
+					Method bridgedMethod = BridgeMethodResolver.findBridgedMethod(specificMethod);
+					if (bridgedMethod == specificMethod || metadataLookup.inspect(bridgedMethod) == null) {
+						methodMap.put(specificMethod, result);
+					}
+				}
+			}, ReflectionUtils.USER_DECLARED_METHODS);
+
+进入ClassUtils类public static Method getMostSpecificMethod(Method method, @Nullable Class<?> targetClass)方法
+  //获取目标类方法，回调方法中调用
+  Method specificMethod = ClassUtils.getMostSpecificMethod(method, targetClass);
+
+回到AbstractHandlerMethodMapping类protected void detectHandlerMethods(Object handler)方法
+  //此出回调传入的方法，见下方源码处
+  T result = metadataLookup.inspect(specificMethod);
+	源码如下：
+    	//传入一个MetadataLookup的回调，当回调时进入方法内部执行
+			Map<Method, T> methods = MethodIntrospector.selectMethods(userType,
+					(MethodIntrospector.MetadataLookup<T>) method -> {
+						try {
+							return getMappingForMethod(method, userType);
+						}
+						catch (Throwable ex) {
+							throw new IllegalStateException("Invalid mapping on handler class [" +
+									userType.getName() + "]: " + method, ex);
+						}
+					});
+	
+再次回到类，调用protected RequestMappingInfo getMappingForMethod(Method method, Class<?> handlerType)方法
+  //回调方法中调用
+  return getMappingForMethod(method, userType);
+	继续调用RequestMappingHandlerMapping类方法
+  1、private RequestMappingInfo createRequestMappingInfo(AnnotatedElement element)方法
+    //构建一个RequestMappingInfo，根据method构建，当method构建不为空时，在根据目标类构建前缀路径
+    RequestMappingInfo info = createRequestMappingInfo(method);
+		源码：
+    protected RequestMappingInfo getMappingForMethod(Method method, Class<?> handlerType) {
+      //method构建
+      RequestMappingInfo info = createRequestMappingInfo(method);
+      if (info != null) {
+        //目标类构建，及handle
+        RequestMappingInfo typeInfo = createRequestMappingInfo(handlerType);
+        if (typeInfo != null) {
+          //路径信息合并
+          info = typeInfo.combine(info);
+        }
+        String prefix = getPathPrefix(handlerType);
+        if (prefix != null) {
+          info = RequestMappingInfo.paths(prefix).options(this.config).build().combine(info);
+        }
+      }
+      return info;
+    }
+
+再次回到MethodIntrospector类public static <T> Map<Method, T> selectMethods(Class<?> targetType, final MetadataLookup<T> metadataLookup)方法，再其回调方法内部，进入BridgeMethodResolver类public static Method findBridgedMethod(Method bridgeMethod)方法，最后在methodMap中缓存方法。
+  Method bridgedMethod = BridgeMethodResolver.findBridgedMethod(specificMethod);
+	//缓存map
+	final Map<Method, T> methodMap = new LinkedHashMap<>();
+
+
+再次回到AbstractHandlerMethodMapping类protected void detectHandlerMethods(Object handler)方法。
+  回到以下代码处：
+  methods.forEach((method, mapping) -> {
+    Method invocableMethod = AopUtils.selectInvocableMethod(method, userType);
+    //进入RequestMappingHandlerMapping类protected void registerHandlerMethod(Object handler, Method method, RequestMappingInfo mapping)方法
+    registerHandlerMethod(handler, invocableMethod, mapping);
+  });
+  
+进入RequestMappingHandlerMapping类protected void registerHandlerMethod(Object handler, Method method, RequestMappingInfo mapping)方法
+  registerHandlerMethod(handler, invocableMethod, mapping);
+
+再次进入AbstractHandlerMethodMapping类，调用protected void registerHandlerMethod(Object handler, Method method, T mapping)方法
+  super.registerHandlerMethod(handler, method, mapping);
+	继续调用AbstractHandlerMethodMapping类方法
+	1、public void register(T mapping, Object handler, Method method)方法
+    mappingRegistry.register(mapping, handler, method);
+	2、protected HandlerMethod createHandlerMethod(Object handler, Method method)方法
+    //构建一个HandlerMethod
+    HandlerMethod handlerMethod = createHandlerMethod(handler, method);
+		//缓存handlerMethod与handlerMethod的映射关系到mappingLookup中
+		mappingLookup.put(mapping, handlerMethod);
+		private final Map<T, HandlerMethod> mappingLookup = new LinkedHashMap<>();
+	3、private List<String> getDirectUrls(T mapping)方法
+    List<String> directUrls = getDirectUrls(mapping);
+		//缓存url与mapping的映射关系到urlLookup中
+		urlLookup.add(url, mapping);
+		private final MultiValueMap<String, T> urlLookup = new LinkedMultiValueMap<>();
+	注册mapping与MappingRegistration映射关系到registry中
+		this.registry.put(mapping, new MappingRegistration<>(mapping, handlerMethod, directUrls, name));
+		private final Map<T, MappingRegistration<T>> registry = new HashMap<>();
+	至此完成url及handle的映射关系。		
+```
+
+​		spring MVC初始化入口，这个应该比较熟悉，在spring boot未流行时，需要配置很多的配置文件，其中最为熟悉就是web.xml吧，其初始化入口就是DispatcherServlet类。其配置如下：
+
+```xml
+<servlet>  
+  <!-- 配置DispatcherServlet -->  
+  <servlet-name>springMvc</servlet-name>  
+  <servlet-class>org.springframework.web.servlet.DispatcherServlet</servlet-class>  
+  <!-- 指定spring mvc配置文件位置 不指定使用默认情况 -->  
+  <init-param>     
+    <param-name>contextConfigLocation</param-name>
+    <param-value>classpath:spring/spring-mvc.xml</param-value>
+  </init-param>  
+  <!-- 设置启动顺序 -->  
+  <load-on-startup>1</load-on-startup>  
+</servlet>
+
+<!-- ServLet 匹配映射 -->
+<servlet-mapping>
+  <servlet-name>springMvc</servlet-name>
+  <url-pattern>/</url-pattern>
+</servlet-mapping>
+```
+
+​		首先找到DispatcherServlet这个类，必然是寻找init()方法。然后，我们发现其init方法其实在父类HttpServletBean中。
+
+​    	进入DispatcherServlet类，发现并未有init()方法，因此进入其父类FrameworkServlet继续寻找，但是在FrameworkServlet类仍未找到，故继续进入其父类HttpServletBean类，终于找到其初始化方法public final void init() throws ServletException，该方法就是其初始化的入口，下面基于该方法分析。
+
+```java
+进入HttpServletBean类public final void init() throws ServletException方法
+  //初始化servlet
+  initServletBean();
+  该方法中核心方法 initServletBean()。
+
+进入FrameworkServlet类protected final void initServletBean() throws ServletException方法
+  initServletBean();
+	继续调用FrameworkServlet类方法
+  1、protected WebApplicationContext initWebApplicationContext()方法
+  	this.webApplicationContext = initWebApplicationContext();
+
+进入DispatcherServlet类protected void onRefresh(ApplicationContext context)方法
+  onRefresh(wac);
+	继续调用DispatcherServlet类方法
+  1、protected void initStrategies(ApplicationContext context)方法
+    initStrategies(context);
+		该方法主要是初始化九大组件，源码如下：
+    //初始化策略
+    protected void initStrategies(ApplicationContext context) {
+    	//多文件上传的组件 
+      initMultipartResolver(context); 
+      //初始化本地语言环境 
+      initLocaleResolver(context); 
+      //初始化模板处理器 
+      initThemeResolver(context); 
+      //handlerMapping 
+      initHandlerMappings(context); 
+      //初始化参数适配器 
+      initHandlerAdapters(context); 
+      //初始化异常拦截器 
+      initHandlerExceptionResolvers(context); 
+      //初始化视图预处理器 
+      initRequestToViewNameTranslator(context); 
+      //初始化视图转换器 
+      initViewResolvers(context);
+      //FlashMap 管理器
+      initFlashMapManager(context); 
+    }
+	2、private void initHandlerMappings(ApplicationContext context)方法
+    initHandlerMappings(context);
+	
+进入BeanFactoryUtils类public static <T> Map<String, T> beansOfTypeIncludingAncestors(
+			ListableBeanFactory lbf, Class<T> type, boolean includeNonSingletons, boolean allowEagerInit)
+			throws BeansException 方法
+  Map<String, HandlerMapping> matchingBeans =
+  BeanFactoryUtils.beansOfTypeIncludingAncestors(context, HandlerMapping.class, true, false);
+
+进入AbstractApplicationContext类public <T> Map<String, T> getBeansOfType(@Nullable Class<T> type, boolean includeNonSingletons, boolean allowEagerInit) throws BeansException方法
+  result.putAll(lbf.getBeansOfType(type, includeNonSingletons, allowEagerInit));
+
+进入DefaultListableBeanFactory类public <T> Map<String, T> getBeansOfType(@Nullable Class<T> type, boolean includeNonSingletons, boolean allowEagerInit) throws BeansException方法
+  return getBeanFactory().getBeansOfType(type, includeNonSingletons, allowEagerInit);
+	继续调用DefaultListableBeanFactory类方法
+  1、public String[] getBeanNamesForType(@Nullable Class<?> type, boolean includeNonSingletons, boolean allowEagerInit)方法
+    String[] beanNames = getBeanNamesForType(type, includeNonSingletons, allowEagerInit);
+	2、private String[] doGetBeanNamesForType(ResolvableType type, boolean includeNonSingletons, boolean allowEagerInit)方法
+    return doGetBeanNamesForType(ResolvableType.forRawClass(type), includeNonSingletons, allowEagerInit);
+```
+
+​		运行阶段，这一步是由请求触发的，所以入口为 DispatcherServlet 的核心方法为 doService()， doService()中的核心逻辑由 doDispatch()实现，流程分析如下：
+
+```java
+进入DispatcherServlet类protected void doService(HttpServletRequest request, HttpServletResponse response) throws Exception方法
+  继续调用DispatcherServlet类方法
+  1、protected void doDispatch(HttpServletRequest request, HttpServletResponse response) throws Exception方法
+  	 doDispatch(request, response);
+	2、protected HttpServletRequest checkMultipart(HttpServletRequest request) throws MultipartException方法
+		// 检查是否是文件上传的请求 
+    processedRequest = checkMultipart(request);
+	3、protected HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception方法
+    // 取得处理当前请求的 Controller,这里也称为 hanlder,处理器,
+    // 第一个步骤的意义就在这里体现了.这里并不是直接返回 Controller,
+    // 而是返回的 HandlerExecutionChain 请求处理器链对象,
+    // 该对象封装了 handler 和 interceptors.
+		mappedHandler = getHandler(processedRequest);
+		源码如下：
+    @Nullable
+    protected HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception {
+      if (this.handlerMappings != null) {
+        //遍历所有handler，当遍历到RequestMappingHandlerMapping时，进入AbstractHandlerMapping类public final HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception方法
+        for (HandlerMapping mapping : this.handlerMappings) {
+          HandlerExecutionChain handler = mapping.getHandler(request);
+          if (handler != null) {
+            return handler;
+          }
+        }
+      }
+      return null;
+    }
+进入AbstractHandlerMapping类public final HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception方法
+  HandlerExecutionChain handler = mapping.getHandler(request);
+
+进入RequestMappingInfoHandlerMapping类protected HandlerMethod getHandlerInternal(HttpServletRequest request) throws Exception方法
+  Object handler = getHandlerInternal(request);
+进入AbstractHandlerMethodMapping类protected HandlerMethod getHandlerInternal(HttpServletRequest request) throws Exception方法
+  return super.getHandlerInternal(request);
+进入UrlPathHelper类public String getLookupPathForRequest(HttpServletRequest request)方法
+  String lookupPath = getUrlPathHelper().getLookupPathForRequest(request);
+
+回到AbstractHandlerMethodMapping类protected HandlerMethod getHandlerInternal(HttpServletRequest request) throws Exception方法
+  继续调用AbstractHandlerMethodMapping方法
+	1、protected HandlerMethod lookupHandlerMethod(String lookupPath, HttpServletRequest request) throws Exception方法
+  HandlerMethod handlerMethod = lookupHandlerMethod(lookupPath, request);
+	//得到RequestMappingInfo列表，最终得到一个最优RequestMappingInfo
+	List<T> directPathMatches = this.mappingRegistry.getMappingsByUrl(lookupPath);
+回到AbstractHandlerMethodMapping类public HandlerMethod createWithResolvedBean()方法，继续执行，进入HandlerMethod类public HandlerMethod createWithResolvedBean()方法
+  //方法内部通过IOC容器获取handler及Controller，此处是一个cglib的代理对象，最终得到一个HandlerMethod对象
+  return (handlerMethod != null ? handlerMethod.createWithResolvedBean() : null);
+回到AbstractHandlerMapping类public final HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception方法
+  继续调用AbstractHandlerMapping类方法
+  1、protected HandlerExecutionChain getHandlerExecutionChain(Object handler, HttpServletRequest request) 方法
+  	//继续此处执行，得到一个执行链
+  	HandlerExecutionChain executionChain = getHandlerExecutionChain(handler, request);
+再次回到DispatcherServlet类protected void doDispatch(HttpServletRequest request, HttpServletResponse response) throws Exception方法
+  继续调用DispatcherServlet类方法
+  1、protected HandlerAdapter getHandlerAdapter(Object handler) throws ServletException方法  
+    //获取处理request的处理器适配器handler adapter
+    HandlerAdapter ha = getHandlerAdapter(mappedHandler.getHandler());
+进入AbstractHandlerMethodAdapter类public final ModelAndView handle(HttpServletRequest request, 		HttpServletResponse response, Object handler) throws Exception方法
+  mv = ha.handle(processedRequest, response, mappedHandler.getHandler());
+进入RequestMappingHandlerAdapter类protected ModelAndView handleInternal(HttpServletRequest request,
+			HttpServletResponse response, HandlerMethod handlerMethod) throws Exception方法
+  return handleInternal(request, response, (HandlerMethod) handler);
+	继续调用RequestMappingHandlerAdapter类方法
+  1、protected ModelAndView invokeHandlerMethod(HttpServletRequest request,
+			HttpServletResponse response, HandlerMethod handlerMethod) throws Exception方法
+    mav = invokeHandlerMethod(request, response, handlerMethod);
+进入ServletInvocableHandlerMethod类public void invokeAndHandle(ServletWebRequest webRequest, ModelAndViewContainer mavContainer, Object... providedArgs) throws Exception方法
+  invocableMethod.invokeAndHandle(webRequest, mavContainer);
+进入InvocableHandlerMethod类public Object invokeForRequest(NativeWebRequest request, @Nullable ModelAndViewContainer mavContainer, Object... providedArgs) throws Exception方法
+  Object returnValue = invokeForRequest(webRequest, mavContainer, providedArgs);
+	继续调用InvocableHandlerMethod类方法
+  1、protected Object[] getMethodArgumentValues(NativeWebRequest request, @Nullable ModelAndViewContainer mavContainer, Object... providedArgs) throws Exception方法
+    //获取方法参数值，绑定参数
+		Object[] args = getMethodArgumentValues(request, mavContainer, providedArgs);
+进入HandlerMethodArgumentResolverComposite类public Object resolveArgument(MethodParameter parameter, @Nullable ModelAndViewContainer mavContainer,
+			NativeWebRequest webRequest, @Nullable WebDataBinderFactory binderFactory) throws Exception方法
+	args[i] = this.resolvers.resolveArgument(parameter, mavContainer, request, this.dataBinderFactory);
+回到InvocableHandlerMethod类public Object invokeForRequest(NativeWebRequest request, @Nullable ModelAndViewContainer mavContainer, Object... providedArgs) throws Exception方法，继续执行
+  继续调用InvocableHandlerMethod类方法
+  1、protected Object doInvoke(Object... args) throws Exception方法
+  	return doInvoke(args);
+		//通过桥接方法反射调用，最终进入目标类目标方法，其执行和AOP拦截链流程一致，此处不再分析
+		return getBridgedMethod().invoke(getBean(), args);
+再次回到ServletInvocableHandlerMethod类public void invokeAndHandle(ServletWebRequest webRequest, ModelAndViewContainer mavContainer, Object... providedArgs) throws Exception方法，继续往下执行
+  	//此处得到执行返回值
+  	Object returnValue = invokeForRequest(webRequest, mavContainer, providedArgs);
+进入HandlerMethodReturnValueHandlerComposite类public void handleReturnValue(@Nullable Object returnValue, MethodParameter returnType, ModelAndViewContainer mavContainer, NativeWebRequest webRequest) throws Exception方法
+进入HandlerMethodReturnValueHandlerComposite类public void handleReturnValue(@Nullable Object returnValue, MethodParameter returnType, ModelAndViewContainer mavContainer, NativeWebRequest webRequest) throws Exception方法
+		//处理返回值
+		returnValueHandlers.handleReturnValue(returnValue, getReturnValueType(returnValue), mavContainer, webRequest);
+	继续调用HandlerMethodReturnValueHandlerComposite类方法
+  1、private HandlerMethodReturnValueHandler selectHandler(@Nullable Object value, MethodParameter returnType)方法
+    //次处HandlerMethodReturnValueHandler是一个RequestResponseBodyMethodProcessor
+  	HandlerMethodReturnValueHandler handler = selectHandler(returnValue, returnType);
+进入RequestResponseBodyMethodProcessor类public void handleReturnValue(@Nullable Object returnValue, MethodParameter returnType, ModelAndViewContainer mavContainer, NativeWebRequest webRequest)
+			throws IOException, HttpMediaTypeNotAcceptableException, HttpMessageNotWritableException方法
+		handler.handleReturnValue(returnValue, returnType, mavContainer, webRequest);
+	源码：
+	@Override
+	public void handleReturnValue(@Nullable Object returnValue, MethodParameter returnType,
+			ModelAndViewContainer mavContainer, NativeWebRequest webRequest)
+			throws IOException, HttpMediaTypeNotAcceptableException, HttpMessageNotWritableException {
+
+		mavContainer.setRequestHandled(true);
+    //创建一个ServletServerHttpRequest
+		ServletServerHttpRequest inputMessage = createInputMessage(webRequest);
+    //创建一个ServletServerHttpResponse
+		ServletServerHttpResponse outputMessage = createOutputMessage(webRequest);
+
+		// Try even with null return value. ResponseBodyAdvice could get involved.
+		writeWithMessageConverters(returnValue, returnType, inputMessage, outputMessage);
+	}
+	继续调用RequestResponseBodyMethodProcessor类方法
+  1、protected <T> void writeWithMessageConverters(@Nullable T value, MethodParameter returnType,
+			ServletServerHttpRequest inputMessage, ServletServerHttpResponse outputMessage)
+			throws IOException, HttpMediaTypeNotAcceptableException, HttpMessageNotWritableException方法
+    	//遍历消息数据转换器进行匹配，获取body
+    	body = getAdvice().beforeBodyWrite(body, returnType, selectedMediaType,
+							(Class<? extends HttpMessageConverter<?>>) converter.getClass(),
+							inputMessage, outputMessage);
+
+进入AbstractHttpMessageConverter类public final void write(final T t, @Nullable MediaType contentType, HttpOutputMessage outputMessage) throws IOException, HttpMessageNotWritableException方法
+  //将数据转换为配置的数据格式
+  ((HttpMessageConverter) converter).write(body, selectedMediaType, outputMessage);
+回到RequestMappingHandlerAdapter类protected ModelAndView invokeHandlerMethod(HttpServletRequest request,
+			HttpServletResponse response, HandlerMethod handlerMethod) throws Exception方法，继续往下执行
+  //获取ModelAndView
+  return getModelAndView(mavContainer, modelFactory, webRequest);
+最终回到DispatcherServlet类protected void doDispatch(HttpServletRequest request, HttpServletResponse response) throws Exception方法继续执行
+  //结果视图对象的处理
+  applyDefaultViewName(processedRequest, mv);
+
+
+```
+
+
+
